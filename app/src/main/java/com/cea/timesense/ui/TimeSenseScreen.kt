@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cea.timesense.TimeSenseStore
@@ -275,7 +276,7 @@ private fun SoundHint(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Cue.entries.forEach { cue ->
@@ -285,6 +286,7 @@ private fun SoundHint(
                     caption = slot.label(settings.customs),
                     onClick = { onPreview(cue) },
                     onLongClick = { onOpenSettings(cue) },
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -305,24 +307,41 @@ private fun HintCell(
     caption: String,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
+        modifier = modifier
+            .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
                 role = Role.Button,
                 onClickLabel = "试听$title",
-                    onLongClickLabel = "打开${title}设置",
+                onLongClickLabel = "打开${title}设置",
                 onClick = onClick,
                 onLongClick = onLongClick,
             )
             .background(CharcoalRaised)
-            .padding(horizontal = 18.dp, vertical = 10.dp),
+            .padding(horizontal = 10.dp, vertical = 10.dp),
     ) {
-        Text(title, color = Cream, fontSize = 14.sp, letterSpacing = 2.sp)
+        Text(
+            text = title,
+            color = Cream,
+            fontSize = 14.sp,
+            letterSpacing = 2.sp,
+            maxLines = 1,
+        )
         Spacer(Modifier.height(2.dp))
-        Text(caption, color = Muted, fontSize = 11.sp, letterSpacing = 1.sp)
+        Text(
+            text = caption,
+            color = Muted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

@@ -8,14 +8,15 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.cea.timesense.MainActivity
 import com.cea.timesense.R
 import com.cea.timesense.TimeSenseStore
-import com.cea.timesense.audio.Cue
 import com.cea.timesense.audio.SoundEngine
 import com.cea.timesense.time.ClockScheduler
 import com.cea.timesense.time.TimeSync
@@ -27,7 +28,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -42,6 +42,7 @@ class TickService : Service() {
     private var scheduler: ClockScheduler? = null
     private var syncThread: Thread? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val notifyHandler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var syncRunning = false
@@ -85,6 +86,7 @@ class TickService : Service() {
         syncThread = null
         scheduler?.stop()
         scheduler = null
+        notifyHandler.removeCallbacksAndMessages(null)
         soundEngine?.release()
         soundEngine = null
         if (wakeLock?.isHeld == true) {
@@ -104,18 +106,11 @@ class TickService : Service() {
     }
 
     private fun onAlignedSecond(wallClockMs: Long) {
-        val cal = Calendar.getInstance().apply { timeInMillis = wallClockMs }
-        val minute = cal.get(Calendar.MINUTE)
-        val second = cal.get(Calendar.SECOND)
-        val cue = when {
-            minute == 0 && second == 0 -> Cue.DING
-            second == 0 -> Cue.KATA
-            else -> Cue.TICK
-        }
+        val cue = ClockScheduler.cueAt(wallClockMs)
         if (!TimeSenseStore.ticksHeldNow) {
             soundEngine?.play(cue)
         }
-        updateNotification(wallClockMs)
+        notifyHandler.post { updateNotification(wallClockMs) }
     }
 
     private fun startSyncLoop() {
@@ -217,13 +212,11 @@ class TickService : Service() {
     }
 
     private fun formatHms(wallClockMs: Long): String {
-        val cal = Calendar.getInstance().apply { timeInMillis = wallClockMs }
-        return String.format(
-            Locale.CHINA,
-            "%02d:%02d:%02d",
-            cal.get(Calendar.HOUR_OF_DAY),
-            cal.get(Calendar.MINUTE),
-            cal.get(Calendar.SECOND),
-        )
+        val localMs = wallClockMs + java.util.TimeZone.getDefault().getOffset(wallClockMs)
+        val totalSec = Math.floorDiv(localMs, 1000L)
+        val second = Math.floorMod(totalSec, 60L).toInt()
+        val minute = Math.floorMod(Math.floorDiv(totalSec, 60L), 60L).toInt()
+        val hour = Math.floorMod(Math.floorDiv(totalSec, 3600L), 24L).toInt()
+        return String.format(Locale.CHINA, "%02d:%02d:%02d", hour, minute, second)
     }
 }
