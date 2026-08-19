@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.TimeSense" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#FF12100E</item>
+        <item name="android:navigationBarColor">#FF12100E</item>
+        <item name="android:windowBackground">#FF12100E</item>
+        <item name="android:colorPrimary">#FFE0A84A</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

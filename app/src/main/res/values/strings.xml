@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">时感</string>
+    <string name="notification_title">时感正在走时</string>
+    <string name="notification_stop">停止</string>
+    <string name="notification_channel_name">时感走时</string>
+    <string name="notification_channel_desc">走时进行中时显示当前时刻</string>
+</resources>
