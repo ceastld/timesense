@@ -1,5 +1,6 @@
 package com.cea.timesense.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -29,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cea.timesense.TimeSenseStore
+import com.cea.timesense.audio.BuiltinTones
 import com.cea.timesense.audio.Cue
 import com.cea.timesense.audio.SoundEngine
 import com.cea.timesense.ui.theme.Amber
@@ -50,7 +53,9 @@ import com.cea.timesense.ui.theme.CharcoalRaised
 import com.cea.timesense.ui.theme.Cream
 import com.cea.timesense.ui.theme.Hairline
 import com.cea.timesense.ui.theme.Muted
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -68,10 +73,49 @@ fun TimeSenseScreen(
     val heldOut by TimeSenseStore.audioHeldOut.collectAsState()
     var clock by remember { mutableStateOf(formatClock(TimeSenseStore.nowMillis())) }
     var showSettings by remember { mutableStateOf(false) }
+    var settingsFocusCue by remember { mutableStateOf<Cue?>(null) }
     val context = LocalContext.current
-    val previewEngine = remember(settings.epoch) { SoundEngine(context.applicationContext, holdFocus = false) }
+    val scope = rememberCoroutineScope()
+    val previewEngine = remember { SoundEngine(context.applicationContext, holdFocus = false) }
+    var previewHoldJob by remember { mutableStateOf<Job?>(null) }
     DisposableEffect(previewEngine) {
-        onDispose { previewEngine.release() }
+        onDispose {
+            previewHoldJob?.cancel()
+            TimeSenseStore.setTicksHeld(false)
+            previewEngine.release()
+        }
+    }
+    LaunchedEffect(settings.ignoreAudioFocus) {
+        previewEngine.reloadFromStore()
+    }
+    LaunchedEffect(showSettings) {
+        previewHoldJob?.cancel()
+        TimeSenseStore.setTicksHeld(showSettings)
+    }
+
+    fun previewSound(soundId: String) {
+        previewEngine.playExclusive(soundId, force = true)
+        if (showSettings) return
+        previewHoldJob?.cancel()
+        previewHoldJob = scope.launch {
+            TimeSenseStore.setTicksHeld(true)
+            delay(BuiltinTones.durationMs(soundId) + 80L)
+            TimeSenseStore.setTicksHeld(false)
+        }
+    }
+
+    fun openSettings(cue: Cue? = null) {
+        settingsFocusCue = cue
+        showSettings = true
+    }
+
+    fun closeSettings() {
+        showSettings = false
+        settingsFocusCue = null
+    }
+
+    BackHandler(enabled = showSettings) {
+        closeSettings()
     }
 
     LaunchedEffect(Unit) {
@@ -124,15 +168,18 @@ fun TimeSenseScreen(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable(role = Role.Button) { showSettings = !showSettings }
+                        .clickable(role = Role.Button) {
+                            if (showSettings) closeSettings() else openSettings()
+                        }
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
             }
             if (showSettings) {
                 Spacer(Modifier.height(20.dp))
                 SettingsPanel(
-                    onPreview = { soundId -> previewEngine.playId(soundId, force = true) },
-                    onClose = { showSettings = false },
+                    onPreview = { soundId -> previewSound(soundId) },
+                    onClose = { closeSettings() },
+                    focusCue = settingsFocusCue,
                     modifier = Modifier.weight(1f),
                 )
                 Spacer(Modifier.height(16.dp))
@@ -191,8 +238,8 @@ fun TimeSenseScreen(
                 Spacer(Modifier.height(28.dp))
                 SoundHint(
                     settings = settings,
-                    onPreview = { cue -> previewEngine.play(cue, force = true) },
-                    onOpenSettings = { showSettings = true },
+                    onPreview = { cue -> previewSound(settings.slot(cue).selectedId) },
+                    onOpenSettings = { cue -> openSettings(cue) },
                 )
                 Spacer(Modifier.height(24.dp))
             }
@@ -223,7 +270,7 @@ private fun SyncStatus(sync: TimeSenseStore.SyncInfo?) {
 private fun SoundHint(
     settings: TimeSenseStore.Settings,
     onPreview: (Cue) -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenSettings: (Cue) -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
@@ -237,7 +284,7 @@ private fun SoundHint(
                     title = cue.titleZh,
                     caption = slot.label(settings.customs),
                     onClick = { onPreview(cue) },
-                    onLongClick = onOpenSettings,
+                    onLongClick = { onOpenSettings(cue) },
                 )
             }
         }
@@ -266,7 +313,7 @@ private fun HintCell(
             .combinedClickable(
                 role = Role.Button,
                 onClickLabel = "试听$title",
-                onLongClickLabel = "打开设置",
+                    onLongClickLabel = "打开${title}设置",
                 onClick = onClick,
                 onLongClick = onLongClick,
             )

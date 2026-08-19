@@ -31,6 +31,9 @@ class SoundEngine(
     private val expectedLoads = AtomicInteger(0)
 
     @Volatile
+    private var lastStreamId: Int = 0
+
+    @Volatile
     private var released = false
 
     init {
@@ -48,9 +51,26 @@ class SoundEngine(
         rebuildSounds()
     }
 
+    fun ensureLoaded(soundId: String) {
+        if (released || ids.containsKey(soundId)) return
+        val file = SoundBank.fileFor(app, soundId)
+        if (!file.isFile || file.length() <= 0L) return
+        val poolId = pool.load(file.absolutePath, 1)
+        if (poolId == 0) return
+        ids[soundId] = poolId
+        expectedLoads.incrementAndGet()
+    }
+
     fun play(cue: Cue, force: Boolean = false) {
         val id = TimeSenseStore.settings.value.slot(cue).selectedId
         playId(id, force)
+    }
+
+    fun playExclusive(soundId: String, force: Boolean = true) {
+        if (released) return
+        ensureLoaded(soundId)
+        stopLast()
+        playId(soundId, force)
     }
 
     fun playId(soundId: String, force: Boolean = false) {
@@ -73,11 +93,13 @@ class SoundEngine(
         }
         ids.clear()
         pending.clear()
+        lastStreamId = 0
     }
 
     private fun rebuildSounds() {
         pending.clear()
         ids.clear()
+        lastStreamId = 0
         loadedCount.set(0)
         try {
             pool.release()
@@ -134,11 +156,21 @@ class SoundEngine(
         }
     }
 
+    private fun stopLast() {
+        val streamId = lastStreamId
+        if (streamId == 0) return
+        lastStreamId = 0
+        try {
+            pool.stop(streamId)
+        } catch (_: RuntimeException) {
+        }
+    }
+
     private fun playNow(soundId: String) {
         if (released) return
         val poolId = ids[soundId] ?: ids[fallbackId(soundId)] ?: return
         try {
-            pool.play(poolId, 1f, 1f, /* priority */ 1, /* loop */ 0, /* rate */ 1f)
+            lastStreamId = pool.play(poolId, 1f, 1f, /* priority */ 1, /* loop */ 0, /* rate */ 1f)
         } catch (_: RuntimeException) {
             // SoundPool already released on the service teardown path.
         }

@@ -23,7 +23,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
@@ -56,7 +58,11 @@ class TickService : Service() {
         }
         soundEngine = SoundEngine(this, holdFocus = true)
         scope.launch {
-            TimeSenseStore.settings.drop(1).collect { soundEngine?.reloadFromStore() }
+            TimeSenseStore.settings
+                .map { it.audioEpoch }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { soundEngine?.reloadFromStore() }
         }
     }
 
@@ -106,7 +112,9 @@ class TickService : Service() {
             second == 0 -> Cue.KATA
             else -> Cue.TICK
         }
-        soundEngine?.play(cue)
+        if (!TimeSenseStore.ticksHeldNow) {
+            soundEngine?.play(cue)
+        }
         updateNotification(wallClockMs)
     }
 

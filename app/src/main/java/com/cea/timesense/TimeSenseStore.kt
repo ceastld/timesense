@@ -52,13 +52,20 @@ object TimeSenseStore {
         val sounds: Map<Cue, SoundSlot>,
         val customs: List<CustomSound>,
         val epoch: Int,
+        val audioEpoch: Int,
     ) {
         fun slot(cue: Cue): SoundSlot = sounds[cue] ?: SoundSlot(cue.defaultSoundId)
 
         fun optionsFor(cue: Cue): List<SoundOption> {
             val builtin = BuiltinTones.forCue(cue)
             val extra = customs.filter { it.cue == cue }.map { custom ->
-                SoundOption(id = custom.id, cue = cue, label = custom.name, builtin = false)
+                SoundOption(
+                    id = custom.id,
+                    cue = cue,
+                    label = custom.name,
+                    builtin = false,
+                    durationMs = 1_200L,
+                )
             }
             return builtin + extra
         }
@@ -85,11 +92,18 @@ object TimeSenseStore {
     private val _lastSync = MutableStateFlow<SyncInfo?>(null)
     val lastSync: StateFlow<SyncInfo?> = _lastSync.asStateFlow()
 
+    private val _settings = MutableStateFlow(defaultSettings())
+    val settings: StateFlow<Settings> = _settings.asStateFlow()
+
     private val _audioHeldOut = MutableStateFlow(false)
     val audioHeldOut: StateFlow<Boolean> = _audioHeldOut.asStateFlow()
 
-    private val _settings = MutableStateFlow(defaultSettings())
-    val settings: StateFlow<Settings> = _settings.asStateFlow()
+    private val _ticksHeld = MutableStateFlow(false)
+    val ticksHeld: StateFlow<Boolean> = _ticksHeld.asStateFlow()
+
+    @Volatile
+    var ticksHeldNow: Boolean = false
+        private set
 
     fun init(context: Context) {
         if (this::prefs.isInitialized) return
@@ -112,23 +126,31 @@ object TimeSenseStore {
 
     fun setRunning(running: Boolean) {
         _isRunning.value = running
-        if (!running) _audioHeldOut.value = false
+        if (!running) {
+            _audioHeldOut.value = false
+            setTicksHeld(false)
+        }
     }
 
     fun setAudioHeldOut(heldOut: Boolean) {
         _audioHeldOut.value = heldOut
     }
 
+    fun setTicksHeld(held: Boolean) {
+        ticksHeldNow = held
+        _ticksHeld.value = held
+    }
+
     fun setIgnoreAudioFocus(ignore: Boolean) {
         if (!this::prefs.isInitialized) return
         prefs.edit().putBoolean(KEY_IGNORE_FOCUS, ignore).apply()
-        bumpSettings()
+        bumpSettings(reloadAudio = true)
     }
 
     fun setSelectedSound(cue: Cue, soundId: String) {
         if (!this::prefs.isInitialized) return
         prefs.edit().putString(cue.prefsKey, soundId).apply()
-        bumpSettings()
+        bumpSettings(reloadAudio = false)
     }
 
     fun addCustomSound(imported: SoundBank.Imported) {
@@ -136,7 +158,7 @@ object TimeSenseStore {
         val next = customsFromPrefs() + CustomSound(imported.id, imported.cue, imported.name)
         writeCustoms(next)
         prefs.edit().putString(imported.cue.prefsKey, imported.id).apply()
-        bumpSettings()
+        bumpSettings(reloadAudio = true)
     }
 
     fun removeCustomSound(context: Context, id: String) {
@@ -149,7 +171,7 @@ object TimeSenseStore {
             }
         }
         SoundBank.delete(context, id)
-        bumpSettings()
+        bumpSettings(reloadAudio = true)
     }
 
     fun applySuccessfulSync(offset: Long, rtt: Long, host: String) {
@@ -190,12 +212,16 @@ object TimeSenseStore {
             .apply()
     }
 
-    private fun bumpSettings() {
-        _settings.value = readSettings(_settings.value.epoch + 1)
+    private fun bumpSettings(reloadAudio: Boolean) {
+        val current = _settings.value
+        _settings.value = readSettings(
+            epoch = current.epoch + 1,
+            audioEpoch = if (reloadAudio) current.audioEpoch + 1 else current.audioEpoch,
+        )
     }
 
-    private fun readSettings(epoch: Int = _settings.value.epoch): Settings {
-        if (!this::prefs.isInitialized) return defaultSettings(epoch)
+    private fun readSettings(epoch: Int = _settings.value.epoch, audioEpoch: Int = _settings.value.audioEpoch): Settings {
+        if (!this::prefs.isInitialized) return defaultSettings(epoch, audioEpoch)
         val customs = customsFromPrefs()
         val sounds = Cue.entries.associateWith { cue ->
             val raw = prefs.getString(cue.prefsKey, null)
@@ -212,14 +238,16 @@ object TimeSenseStore {
             sounds = sounds,
             customs = customs,
             epoch = epoch,
+            audioEpoch = audioEpoch,
         )
     }
 
-    private fun defaultSettings(epoch: Int = 0): Settings = Settings(
+    private fun defaultSettings(epoch: Int = 0, audioEpoch: Int = 0): Settings = Settings(
         ignoreAudioFocus = true,
         sounds = Cue.entries.associateWith { SoundSlot(it.defaultSoundId) },
         customs = emptyList(),
         epoch = epoch,
+        audioEpoch = audioEpoch,
     )
 
     private fun customsFromPrefs(): List<CustomSound> {

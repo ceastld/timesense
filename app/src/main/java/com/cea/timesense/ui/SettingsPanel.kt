@@ -3,6 +3,7 @@ package com.cea.timesense.ui
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,14 +15,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cea.timesense.TimeSenseStore
@@ -46,10 +50,12 @@ import com.cea.timesense.ui.theme.Cream
 import com.cea.timesense.ui.theme.Hairline
 import com.cea.timesense.ui.theme.Muted
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SettingsPanel(
     onPreview: (soundId: String) -> Unit,
     onClose: () -> Unit,
+    focusCue: Cue? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -80,8 +86,7 @@ fun SettingsPanel(
             .clip(RoundedCornerShape(20.dp))
             .background(CharcoalRaised)
             .border(1.dp, Hairline, RoundedCornerShape(20.dp))
-            .padding(horizontal = 20.dp, vertical = 18.dp)
-            .verticalScroll(rememberScrollState()),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -99,16 +104,13 @@ fun SettingsPanel(
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
-        Spacer(Modifier.height(18.dp))
-        Text("音频焦点", color = Muted, fontSize = 11.sp, letterSpacing = 2.sp)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("忽略音频焦点", color = Cream, fontSize = 15.sp)
-                Spacer(Modifier.height(4.dp))
+                Text("忽略音频焦点", color = Cream, fontSize = 14.sp)
                 Text(
                     text = if (settings.ignoreAudioFocus) {
                         "看视频或打电话时仍发声"
@@ -116,8 +118,8 @@ fun SettingsPanel(
                         "其他应用占用音频时暂停发声"
                     },
                     color = Muted,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
                 )
             }
             Switch(
@@ -132,109 +134,138 @@ fun SettingsPanel(
                 ),
             )
         }
-        Spacer(Modifier.height(22.dp))
-        Text("音效  ·  内置列表，自定义追加在后", color = Muted, fontSize = 11.sp, letterSpacing = 1.sp)
         Spacer(Modifier.height(10.dp))
-        Cue.entries.forEach { cue ->
-            val selected = settings.slot(cue).selectedId
-            SoundList(
-                cue = cue,
-                options = settings.optionsFor(cue),
-                selectedId = selected,
-                onSelect = { option ->
-                    TimeSenseStore.setSelectedSound(cue, option.id)
-                    onPreview(option.id)
-                },
-                onDelete = { option ->
-                    TimeSenseStore.removeCustomSound(context, option.id)
-                },
-                onAdd = {
-                    pendingCue = cue
-                    picker.launch(arrayOf("audio/*"))
-                },
-            )
-            Spacer(Modifier.height(12.dp))
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Cue.entries.forEach { cue ->
+                val selected = settings.slot(cue).selectedId
+                SoundGrid(
+                    cue = cue,
+                    options = settings.optionsFor(cue),
+                    selectedId = selected,
+                    focused = cue == focusCue,
+                    onSelect = { option ->
+                        TimeSenseStore.setSelectedSound(cue, option.id)
+                        onPreview(option.id)
+                    },
+                    onDelete = { option ->
+                        TimeSenseStore.removeCustomSound(context, option.id)
+                    },
+                    onAdd = {
+                        pendingCue = cue
+                        picker.launch(arrayOf("audio/*"))
+                    },
+                )
+            }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SoundList(
+private fun SoundGrid(
     cue: Cue,
     options: List<SoundOption>,
     selectedId: String,
+    focused: Boolean,
     onSelect: (SoundOption) -> Unit,
     onDelete: (SoundOption) -> Unit,
     onAdd: () -> Unit,
 ) {
+    val requester = remember { BringIntoViewRequester() }
+    LaunchedEffect(focused) {
+        if (focused) requester.bringIntoView()
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .bringIntoViewRequester(requester)
             .clip(RoundedCornerShape(12.dp))
             .background(Charcoal)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+            .then(
+                if (focused) {
+                    Modifier.border(1.dp, Amber, RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                },
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
-        Text("${cue.titleZh}  ·  ${cue.periodZh}", color = Cream, fontSize = 14.sp)
-        Spacer(Modifier.height(8.dp))
-        options.forEach { option ->
-            val selected = option.id == selectedId
+        Text("${cue.titleZh}  ·  ${cue.periodZh}", color = Cream, fontSize = 13.sp)
+        Spacer(Modifier.height(6.dp))
+        options.chunked(2).forEach { row ->
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(role = Role.RadioButton) { onSelect(option) }
-                    .padding(vertical = 7.dp, horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                RadioMark(selected)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = option.label,
-                    color = if (selected) Amber else Cream,
-                    fontSize = 13.sp,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                )
-                if (!option.builtin) {
-                    Text(
-                        text = "删除",
-                        color = Muted,
-                        fontSize = 12.sp,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable(role = Role.Button) { onDelete(option) }
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                row.forEach { option ->
+                    SoundChip(
+                        option = option,
+                        selected = option.id == selectedId,
+                        onSelect = { onSelect(option) },
+                        onDelete = if (option.builtin) null else ({ onDelete(option) }),
+                        modifier = Modifier.weight(1f),
                     )
                 }
+                if (row.size == 1) {
+                    Spacer(Modifier.weight(1f))
+                }
             }
+            Spacer(Modifier.height(6.dp))
         }
-        Spacer(Modifier.height(4.dp))
         Text(
-            text = "+ 添加自定义音频",
+            text = "+ 自定义",
             color = Amber,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
                 .clickable(role = Role.Button, onClick = onAdd)
-                .padding(horizontal = 4.dp, vertical = 6.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp),
         )
     }
 }
 
 @Composable
-private fun RadioMark(selected: Boolean) {
-    Spacer(
-        modifier = Modifier
-            .width(10.dp)
-            .height(10.dp)
-            .clip(CircleShape)
-            .background(if (selected) Amber else Hairline)
-            .then(
-                if (selected) {
-                    Modifier
-                } else {
-                    Modifier.border(1.dp, Muted, CircleShape)
-                },
-            ),
-    )
+private fun SoundChip(
+    option: SoundOption,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onDelete: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) Amber.copy(alpha = 0.16f) else CharcoalRaised)
+            .border(1.dp, if (selected) Amber else Hairline, RoundedCornerShape(8.dp))
+            .clickable(role = Role.RadioButton, onClick = onSelect)
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = option.label,
+            color = if (selected) Amber else Cream,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (onDelete != null) {
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = "×",
+                color = Muted,
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(role = Role.Button, onClick = onDelete)
+                    .padding(horizontal = 2.dp),
+            )
+        }
+    }
 }
