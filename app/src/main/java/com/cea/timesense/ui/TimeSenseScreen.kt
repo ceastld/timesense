@@ -1,8 +1,11 @@
 package com.cea.timesense.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +23,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -29,12 +33,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cea.timesense.TimeSenseStore
+import com.cea.timesense.audio.Cue
+import com.cea.timesense.audio.SoundEngine
 import com.cea.timesense.ui.theme.Amber
 import com.cea.timesense.ui.theme.AmberDim
 import com.cea.timesense.ui.theme.Charcoal
@@ -49,13 +57,22 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TimeSenseScreen(
     onToggle: (wantRunning: Boolean) -> Unit,
 ) {
     val running by TimeSenseStore.isRunning.collectAsState()
     val sync by TimeSenseStore.lastSync.collectAsState()
+    val settings by TimeSenseStore.settings.collectAsState()
+    val heldOut by TimeSenseStore.audioHeldOut.collectAsState()
     var clock by remember { mutableStateOf(formatClock(TimeSenseStore.nowMillis())) }
+    var showSettings by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val previewEngine = remember(settings.epoch) { SoundEngine(context.applicationContext, holdFocus = false) }
+    DisposableEffect(previewEngine) {
+        onDispose { previewEngine.release() }
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -91,63 +108,94 @@ fun TimeSenseScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.height(36.dp))
-            Text(
-                text = "时感",
-                color = Amber,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 10.sp,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = clock,
-                color = Cream,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Light,
-                fontSize = 56.sp,
-                letterSpacing = 1.5.sp,
-                textAlign = TextAlign.Center,
-                lineHeight = 60.sp,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = if (running) "正在走时" else "静  止",
-                color = if (running) Amber else Muted,
-                fontSize = 13.sp,
-                letterSpacing = 6.sp,
-            )
-            Spacer(Modifier.weight(1f))
-            Button(
-                onClick = { onToggle(!running) },
-                shape = RoundedCornerShape(28.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = buttonColor,
-                    contentColor = buttonContent,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .then(
-                        if (running) {
-                            Modifier.border(1.dp, Hairline, RoundedCornerShape(28.dp))
-                        } else {
-                            Modifier
-                        },
-                    ),
-            ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = if (running) "停止" else "走时",
-                    fontSize = 17.sp,
-                    letterSpacing = 8.sp,
+                    text = "时感",
+                    color = Amber,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
+                    letterSpacing = 10.sp,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+                Text(
+                    text = if (showSettings) "返回" else "设置",
+                    color = Muted,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(role = Role.Button) { showSettings = !showSettings }
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
             }
-            Spacer(Modifier.height(28.dp))
-            SyncStatus(sync)
-            Spacer(Modifier.height(28.dp))
-            SoundHint()
-            Spacer(Modifier.height(24.dp))
+            if (showSettings) {
+                Spacer(Modifier.height(20.dp))
+                SettingsPanel(
+                    onPreview = { cue -> previewEngine.play(cue, force = true) },
+                    onClose = { showSettings = false },
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.height(16.dp))
+            } else {
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = clock,
+                    color = Cream,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Light,
+                    fontSize = 56.sp,
+                    letterSpacing = 1.5.sp,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 60.sp,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = when {
+                        running && heldOut -> "走时静音"
+                        running -> "正在走时"
+                        else -> "静  止"
+                    },
+                    color = if (running) Amber else Muted,
+                    fontSize = 13.sp,
+                    letterSpacing = 6.sp,
+                )
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = { onToggle(!running) },
+                    shape = RoundedCornerShape(28.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = buttonColor,
+                        contentColor = buttonContent,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .then(
+                            if (running) {
+                                Modifier.border(1.dp, Hairline, RoundedCornerShape(28.dp))
+                            } else {
+                                Modifier
+                            },
+                        ),
+                ) {
+                    Text(
+                        text = if (running) "停止" else "走时",
+                        fontSize = 17.sp,
+                        letterSpacing = 8.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                Spacer(Modifier.height(28.dp))
+                SyncStatus(sync)
+                Spacer(Modifier.height(28.dp))
+                SoundHint(
+                    settings = settings,
+                    onPreview = { cue -> previewEngine.play(cue, force = true) },
+                    onOpenSettings = { showSettings = true },
+                )
+                Spacer(Modifier.height(24.dp))
+            }
         }
     }
 }
@@ -170,25 +218,58 @@ private fun SyncStatus(sync: TimeSenseStore.SyncInfo?) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SoundHint() {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        HintCell("滴答", "每秒")
-        HintCell("卡塔", "每分")
-        HintCell("叮", "每时")
+private fun SoundHint(
+    settings: TimeSenseStore.Settings,
+    onPreview: (Cue) -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Cue.entries.forEach { cue ->
+                val custom = settings.slot(cue).isCustom
+                HintCell(
+                    title = cue.titleZh,
+                    caption = if (custom) "自定义" else cue.periodZh,
+                    onClick = { onPreview(cue) },
+                    onLongClick = onOpenSettings,
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "点按试听  ·  长按设置",
+            color = Muted,
+            fontSize = 11.sp,
+            letterSpacing = 2.sp,
+        )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun HintCell(title: String, caption: String) {
+private fun HintCell(
+    title: String,
+    caption: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(
+                role = Role.Button,
+                onClickLabel = "试听$title",
+                onLongClickLabel = "打开设置",
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
             .background(CharcoalRaised)
             .padding(horizontal = 18.dp, vertical = 10.dp),
     ) {

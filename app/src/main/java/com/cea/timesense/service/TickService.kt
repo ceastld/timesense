@@ -15,9 +15,16 @@ import androidx.core.app.ServiceCompat
 import com.cea.timesense.MainActivity
 import com.cea.timesense.R
 import com.cea.timesense.TimeSenseStore
+import com.cea.timesense.audio.Cue
 import com.cea.timesense.audio.SoundEngine
 import com.cea.timesense.time.ClockScheduler
 import com.cea.timesense.time.TimeSync
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -32,6 +39,7 @@ class TickService : Service() {
     private var soundEngine: SoundEngine? = null
     private var scheduler: ClockScheduler? = null
     private var syncThread: Thread? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     @Volatile
     private var syncRunning = false
@@ -46,7 +54,10 @@ class TickService : Service() {
             setReferenceCounted(false)
             acquire()
         }
-        soundEngine = SoundEngine(this)
+        soundEngine = SoundEngine(this, holdFocus = true)
+        scope.launch {
+            TimeSenseStore.settings.drop(1).collect { soundEngine?.reloadFromStore() }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -62,6 +73,7 @@ class TickService : Service() {
     }
 
     override fun onDestroy() {
+        scope.cancel()
         syncRunning = false
         syncThread?.interrupt()
         syncThread = null
@@ -90,9 +102,9 @@ class TickService : Service() {
         val minute = cal.get(Calendar.MINUTE)
         val second = cal.get(Calendar.SECOND)
         val cue = when {
-            minute == 0 && second == 0 -> SoundEngine.Cue.DING
-            second == 0 -> SoundEngine.Cue.KATA
-            else -> SoundEngine.Cue.TICK
+            minute == 0 && second == 0 -> Cue.DING
+            second == 0 -> Cue.KATA
+            else -> Cue.TICK
         }
         soundEngine?.play(cue)
         updateNotification(wallClockMs)

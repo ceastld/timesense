@@ -2,12 +2,13 @@ package com.cea.timesense
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.cea.timesense.audio.Cue
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Process-wide clock offset and UI-facing run/sync state.
+ * Process-wide clock offset and UI-facing run/sync/settings state.
  *
  * [offsetMs] is added to [System.currentTimeMillis] so every consumer
  * (scheduler, UI, notification) sees the same NTP-corrected wall clock.
@@ -24,12 +25,27 @@ object TimeSenseStore {
         val error: String? = null,
     )
 
+    data class SoundSlot(
+        val customName: String?,
+    ) {
+        val isCustom: Boolean get() = !customName.isNullOrBlank()
+    }
+
+    data class Settings(
+        val ignoreAudioFocus: Boolean,
+        val sounds: Map<Cue, SoundSlot>,
+        val epoch: Int,
+    ) {
+        fun slot(cue: Cue): SoundSlot = sounds[cue] ?: SoundSlot(null)
+    }
+
     private const val PREFS = "timesense"
     private const val KEY_OFFSET = "offset_ms"
     private const val KEY_SYNCED_AT = "synced_at"
     private const val KEY_RTT = "rtt_ms"
     private const val KEY_HOST = "host"
     private const val KEY_OK = "ok"
+    private const val KEY_IGNORE_FOCUS = "ignore_audio_focus"
 
     @Volatile
     var offsetMs: Long = 0L
@@ -42,6 +58,12 @@ object TimeSenseStore {
 
     private val _lastSync = MutableStateFlow<SyncInfo?>(null)
     val lastSync: StateFlow<SyncInfo?> = _lastSync.asStateFlow()
+
+    private val _audioHeldOut = MutableStateFlow(false)
+    val audioHeldOut: StateFlow<Boolean> = _audioHeldOut.asStateFlow()
+
+    private val _settings = MutableStateFlow(defaultSettings())
+    val settings: StateFlow<Settings> = _settings.asStateFlow()
 
     fun init(context: Context) {
         if (this::prefs.isInitialized) return
@@ -56,12 +78,36 @@ object TimeSenseStore {
                 host = prefs.getString(KEY_HOST, "") ?: "",
             )
         }
+        _settings.value = readSettings()
     }
 
     fun nowMillis(): Long = System.currentTimeMillis() + offsetMs
 
     fun setRunning(running: Boolean) {
         _isRunning.value = running
+        if (!running) _audioHeldOut.value = false
+    }
+
+    fun setAudioHeldOut(heldOut: Boolean) {
+        _audioHeldOut.value = heldOut
+    }
+
+    fun setIgnoreAudioFocus(ignore: Boolean) {
+        if (!this::prefs.isInitialized) return
+        prefs.edit().putBoolean(KEY_IGNORE_FOCUS, ignore).apply()
+        bumpSettings()
+    }
+
+    fun setCustomSound(cue: Cue, displayName: String) {
+        if (!this::prefs.isInitialized) return
+        prefs.edit().putString(cue.prefsKey, displayName).apply()
+        bumpSettings()
+    }
+
+    fun clearCustomSound(cue: Cue) {
+        if (!this::prefs.isInitialized) return
+        prefs.edit().remove(cue.prefsKey).apply()
+        bumpSettings()
     }
 
     fun applySuccessfulSync(offset: Long, rtt: Long, host: String) {
@@ -101,4 +147,26 @@ object TimeSenseStore {
             .putBoolean(KEY_OK, info.success)
             .apply()
     }
+
+    private fun bumpSettings() {
+        _settings.value = readSettings(_settings.value.epoch + 1)
+    }
+
+    private fun readSettings(epoch: Int = _settings.value.epoch): Settings {
+        if (!this::prefs.isInitialized) return defaultSettings(epoch)
+        val sounds = Cue.entries.associateWith { cue ->
+            SoundSlot(prefs.getString(cue.prefsKey, null)?.takeIf { it.isNotBlank() })
+        }
+        return Settings(
+            ignoreAudioFocus = prefs.getBoolean(KEY_IGNORE_FOCUS, true),
+            sounds = sounds,
+            epoch = epoch,
+        )
+    }
+
+    private fun defaultSettings(epoch: Int = 0): Settings = Settings(
+        ignoreAudioFocus = true,
+        sounds = Cue.entries.associateWith { SoundSlot(null) },
+        epoch = epoch,
+    )
 }
