@@ -131,7 +131,7 @@ fun TimeSenseScreen(
             if (showSettings) {
                 Spacer(Modifier.height(20.dp))
                 SettingsPanel(
-                    onPreview = { cue -> previewEngine.play(cue, force = true) },
+                    onPreview = { soundId -> previewEngine.playId(soundId, force = true) },
                     onClose = { showSettings = false },
                     modifier = Modifier.weight(1f),
                 )
@@ -232,10 +232,10 @@ private fun SoundHint(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Cue.entries.forEach { cue ->
-                val custom = settings.slot(cue).isCustom
+                val slot = settings.slot(cue)
                 HintCell(
                     title = cue.titleZh,
-                    caption = if (custom) "自定义" else cue.periodZh,
+                    caption = slot.label(settings.customs),
                     onClick = { onPreview(cue) },
                     onLongClick = onOpenSettings,
                 )

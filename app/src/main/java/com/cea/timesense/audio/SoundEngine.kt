@@ -25,9 +25,9 @@ class SoundEngine(
     }
 
     private var pool: SoundPool
-    private val ids = HashMap<Cue, Int>(3)
+    private val ids = HashMap<String, Int>(16)
     private val loadedCount = AtomicInteger(0)
-    private val pending = ConcurrentLinkedQueue<Cue>()
+    private val pending = ConcurrentLinkedQueue<String>()
     private val expectedLoads = AtomicInteger(0)
 
     @Volatile
@@ -49,13 +49,18 @@ class SoundEngine(
     }
 
     fun play(cue: Cue, force: Boolean = false) {
+        val id = TimeSenseStore.settings.value.slot(cue).selectedId
+        playId(id, force)
+    }
+
+    fun playId(soundId: String, force: Boolean = false) {
         if (released) return
         if (!force && holdFocus && focusGate?.shouldPlay() == false) return
         if (loadedCount.get() < expectedLoads.get()) {
-            pending.add(cue)
+            pending.add(soundId)
             return
         }
-        playNow(cue)
+        playNow(soundId)
     }
 
     fun release() {
@@ -89,10 +94,22 @@ class SoundEngine(
             }
         }
         var loads = 0
-        for (cue in Cue.entries) {
-            val id = loadCue(cue) ?: continue
-            ids[cue] = id
-            loads += 1
+        for (tone in BuiltinTones.all) {
+            val resId = tone.resId ?: continue
+            val poolId = pool.load(app, resId, 1)
+            if (poolId != 0) {
+                ids[tone.id] = poolId
+                loads += 1
+            }
+        }
+        for (custom in TimeSenseStore.settings.value.customs) {
+            val file = SoundBank.fileFor(app, custom.id)
+            if (!file.isFile || file.length() <= 0L) continue
+            val poolId = pool.load(file.absolutePath, 1)
+            if (poolId != 0) {
+                ids[custom.id] = poolId
+                loads += 1
+            }
         }
         expectedLoads.set(loads)
         if (loads == 0) {
@@ -100,21 +117,11 @@ class SoundEngine(
         }
     }
 
-    private fun loadCue(cue: Cue): Int? {
-        val custom = SoundBank.fileFor(app, cue)
-        val slot = TimeSenseStore.settings.value.slot(cue)
-        if (slot.isCustom && custom.isFile && custom.length() > 0L) {
-            val id = pool.load(custom.absolutePath, 1)
-            if (id != 0) return id
-        }
-        return pool.load(app, cue.builtinRes, 1)
-    }
-
     private fun buildPool(): SoundPool {
         val ignore = TimeSenseStore.settings.value.ignoreAudioFocus
         val attrs = if (ignore) AudioFocusGate.overlayAttrs() else AudioFocusGate.mediaAttrs()
         return SoundPool.Builder()
-            .setMaxStreams(3)
+            .setMaxStreams(4)
             .setAudioAttributes(attrs)
             .build()
     }
@@ -122,18 +129,24 @@ class SoundEngine(
     private fun flushPending() {
         if (loadedCount.get() < expectedLoads.get()) return
         while (true) {
-            val cue = pending.poll() ?: break
-            playNow(cue)
+            val id = pending.poll() ?: break
+            playNow(id)
         }
     }
 
-    private fun playNow(cue: Cue) {
+    private fun playNow(soundId: String) {
         if (released) return
-        val id = ids[cue] ?: return
+        val poolId = ids[soundId] ?: ids[fallbackId(soundId)] ?: return
         try {
-            pool.play(id, 1f, 1f, /* priority */ 1, /* loop */ 0, /* rate */ 1f)
+            pool.play(poolId, 1f, 1f, /* priority */ 1, /* loop */ 0, /* rate */ 1f)
         } catch (_: RuntimeException) {
             // SoundPool already released on the service teardown path.
         }
+    }
+
+    private fun fallbackId(soundId: String): String {
+        val cue = BuiltinTones.byId(soundId)?.cue
+            ?: TimeSenseStore.settings.value.customs.firstOrNull { it.id == soundId }?.cue
+        return cue?.defaultSoundId ?: "tick"
     }
 }

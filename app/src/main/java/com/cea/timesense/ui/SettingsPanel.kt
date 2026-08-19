@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Switch
@@ -36,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import com.cea.timesense.TimeSenseStore
 import com.cea.timesense.audio.Cue
 import com.cea.timesense.audio.SoundBank
+import com.cea.timesense.audio.SoundOption
 import com.cea.timesense.ui.theme.Amber
 import com.cea.timesense.ui.theme.Charcoal
 import com.cea.timesense.ui.theme.CharcoalRaised
@@ -45,7 +48,7 @@ import com.cea.timesense.ui.theme.Muted
 
 @Composable
 fun SettingsPanel(
-    onPreview: (Cue) -> Unit,
+    onPreview: (soundId: String) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -60,9 +63,10 @@ fun SettingsPanel(
         if (uri == null || cue == null) return@rememberLauncherForActivityResult
         val result = SoundBank.import(context, cue, uri)
         result.fold(
-            onSuccess = { name ->
-                TimeSenseStore.setCustomSound(cue, name)
-                Toast.makeText(context, "${cue.titleZh} 已设为 $name", Toast.LENGTH_SHORT).show()
+            onSuccess = { imported ->
+                TimeSenseStore.addCustomSound(imported)
+                onPreview(imported.id)
+                Toast.makeText(context, "已加入 ${imported.name}", Toast.LENGTH_SHORT).show()
             },
             onFailure = { err ->
                 Toast.makeText(context, err.message ?: "无法导入音频", Toast.LENGTH_SHORT).show()
@@ -129,76 +133,108 @@ fun SettingsPanel(
             )
         }
         Spacer(Modifier.height(22.dp))
-        Text("音效  ·  内置 / 自定义", color = Muted, fontSize = 11.sp, letterSpacing = 2.sp)
-        Spacer(Modifier.height(8.dp))
+        Text("音效  ·  内置列表，自定义追加在后", color = Muted, fontSize = 11.sp, letterSpacing = 1.sp)
+        Spacer(Modifier.height(10.dp))
         Cue.entries.forEach { cue ->
-            val slot = settings.slot(cue)
-            SoundRow(
+            val selected = settings.slot(cue).selectedId
+            SoundList(
                 cue = cue,
-                customName = slot.customName,
-                onPreview = { onPreview(cue) },
-                onPick = {
+                options = settings.optionsFor(cue),
+                selectedId = selected,
+                onSelect = { option ->
+                    TimeSenseStore.setSelectedSound(cue, option.id)
+                    onPreview(option.id)
+                },
+                onDelete = { option ->
+                    TimeSenseStore.removeCustomSound(context, option.id)
+                },
+                onAdd = {
                     pendingCue = cue
                     picker.launch(arrayOf("audio/*"))
                 },
-                onReset = {
-                    SoundBank.clear(context, cue)
-                    TimeSenseStore.clearCustomSound(cue)
-                    Toast.makeText(context, "${cue.titleZh} 已恢复内置", Toast.LENGTH_SHORT).show()
-                },
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
 
 @Composable
-private fun SoundRow(
+private fun SoundList(
     cue: Cue,
-    customName: String?,
-    onPreview: () -> Unit,
-    onPick: () -> Unit,
-    onReset: () -> Unit,
+    options: List<SoundOption>,
+    selectedId: String,
+    onSelect: (SoundOption) -> Unit,
+    onDelete: (SoundOption) -> Unit,
+    onAdd: () -> Unit,
 ) {
-    val usingCustom = !customName.isNullOrBlank()
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Charcoal)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("${cue.titleZh}  ·  ${cue.periodZh}", color = Cream, fontSize = 14.sp)
-                Spacer(Modifier.height(2.dp))
+        Text("${cue.titleZh}  ·  ${cue.periodZh}", color = Cream, fontSize = 14.sp)
+        Spacer(Modifier.height(8.dp))
+        options.forEach { option ->
+            val selected = option.id == selectedId
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(role = Role.RadioButton) { onSelect(option) }
+                    .padding(vertical = 7.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioMark(selected)
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    text = if (usingCustom) customName.orEmpty() else "内置",
-                    color = Muted,
-                    fontSize = 12.sp,
+                    text = option.label,
+                    color = if (selected) Amber else Cream,
+                    fontSize = 13.sp,
+                    modifier = Modifier.weight(1f),
                     maxLines = 1,
                 )
-            }
-            TextLink("试听", onPreview)
-            Spacer(Modifier.padding(start = 12.dp))
-            TextLink("选择", onPick)
-            if (usingCustom) {
-                Spacer(Modifier.padding(start = 12.dp))
-                TextLink("恢复", onReset)
+                if (!option.builtin) {
+                    Text(
+                        text = "删除",
+                        color = Muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(role = Role.Button) { onDelete(option) }
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
             }
         }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "+ 添加自定义音频",
+            color = Amber,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(role = Role.Button, onClick = onAdd)
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+        )
     }
 }
 
 @Composable
-private fun TextLink(label: String, onClick: () -> Unit) {
-    Text(
-        text = label,
-        color = Amber,
-        fontSize = 13.sp,
+private fun RadioMark(selected: Boolean) {
+    Spacer(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .width(10.dp)
+            .height(10.dp)
+            .clip(CircleShape)
+            .background(if (selected) Amber else Hairline)
+            .then(
+                if (selected) {
+                    Modifier
+                } else {
+                    Modifier.border(1.dp, Muted, CircleShape)
+                },
+            ),
     )
 }

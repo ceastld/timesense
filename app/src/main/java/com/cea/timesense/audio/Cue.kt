@@ -1,19 +1,10 @@
 package com.cea.timesense.audio
 
-import com.cea.timesense.R
-
 enum class Cue {
     TICK,
     KATA,
     DING,
     ;
-
-    val builtinRes: Int
-        get() = when (this) {
-            TICK -> R.raw.tick
-            KATA -> R.raw.kata
-            DING -> R.raw.ding
-        }
 
     val titleZh: String
         get() = when (this) {
@@ -30,5 +21,8 @@ enum class Cue {
         }
 
     val prefsKey: String
-        get() = "sound_${name.lowercase()}"
+        get() = "selected_${name.lowercase()}"
+
+    val defaultSoundId: String
+        get() = name.lowercase()
 }

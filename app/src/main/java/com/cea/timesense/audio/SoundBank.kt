@@ -5,28 +5,29 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import java.io.File
 import java.io.IOException
+import java.util.UUID
 
 /**
  * Copies user-picked audio into app-private storage so playback
  * does not depend on the original URI staying permissioned.
+ * Customs are a library: many files per cue, listed after builtins.
  */
 object SoundBank {
 
     const val MAX_BYTES: Long = 5L * 1024L * 1024L
+    const val CUSTOM_PREFIX = "c_"
 
-    fun fileFor(context: Context, cue: Cue): File {
-        return File(dir(context), "${cue.name.lowercase()}.bin")
+    fun isCustomId(id: String): Boolean = id.startsWith(CUSTOM_PREFIX)
+
+    fun fileFor(context: Context, id: String): File {
+        return File(dir(context), "$id.bin")
     }
 
-    fun hasCustom(context: Context, cue: Cue): Boolean {
-        val file = fileFor(context, cue)
-        return file.isFile && file.length() > 0L
-    }
-
-    fun import(context: Context, cue: Cue, uri: Uri): Result<String> {
+    fun import(context: Context, cue: Cue, uri: Uri): Result<Imported> {
         val resolver = context.contentResolver
         val displayName = queryDisplayName(context, uri) ?: "自定义音频"
-        val dest = fileFor(context, cue)
+        val id = CUSTOM_PREFIX + UUID.randomUUID().toString().replace("-", "")
+        val dest = fileFor(context, id)
         dest.parentFile?.mkdirs()
         val tmp = File(dest.parentFile, dest.name + ".tmp")
         try {
@@ -41,22 +42,37 @@ object SoundBank {
                     }
                 }
             } ?: return Result.failure(IOException("cannot open audio"))
-            if (dest.exists() && !dest.delete()) {
-                return Result.failure(IOException("cannot replace audio"))
-            }
             if (!tmp.renameTo(dest)) {
                 tmp.copyTo(dest, overwrite = true)
                 tmp.delete()
             }
         } catch (e: Exception) {
             tmp.delete()
+            dest.delete()
             return Result.failure(e)
         }
-        return Result.success(displayName)
+        return Result.success(Imported(id = id, cue = cue, name = displayName))
     }
 
-    fun clear(context: Context, cue: Cue) {
-        fileFor(context, cue).delete()
+    fun delete(context: Context, id: String) {
+        if (!isCustomId(id)) return
+        fileFor(context, id).delete()
+    }
+
+    /**
+     * Moves the v1 single-file custom (tick.bin / kata.bin / ding.bin)
+     * into the library if present.
+     */
+    fun migrateV1(context: Context, cue: Cue): Imported? {
+        val legacy = File(dir(context), "${cue.name.lowercase()}.bin")
+        if (!legacy.isFile || legacy.length() <= 0L) return null
+        val id = CUSTOM_PREFIX + UUID.randomUUID().toString().replace("-", "")
+        val dest = fileFor(context, id)
+        if (!legacy.renameTo(dest)) {
+            legacy.copyTo(dest, overwrite = true)
+            legacy.delete()
+        }
+        return Imported(id = id, cue = cue, name = "自定义")
     }
 
     private fun dir(context: Context): File {
@@ -78,4 +94,10 @@ object SoundBank {
             return it.getString(idx)?.takeIf { name -> name.isNotBlank() }
         }
     }
+
+    data class Imported(
+        val id: String,
+        val cue: Cue,
+        val name: String,
+    )
 }

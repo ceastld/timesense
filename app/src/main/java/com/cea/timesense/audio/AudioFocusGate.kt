@@ -11,7 +11,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * When [ignore] is false, ticks pause while another app is playing media
  * or the device is in a call. We never steal audio focus.
- * When [ignore] is true, ticks keep going (USAGE_ALARM overlay).
+ * When [ignore] is true, ticks keep going on the current output device
+ * (speaker, wired headset, or Bluetooth — not mixed to speaker+headset).
  */
 class AudioFocusGate(
     context: Context,
@@ -83,7 +84,12 @@ class AudioFocusGate(
     }
 
     private fun othersPlaying(configs: List<AudioPlaybackConfiguration>): Boolean {
-        return configs.any { cfg -> blockingUsage(cfg.audioAttributes.usage) }
+        // Our cues use CONTENT_TYPE_SONIFICATION so they are not treated as
+        // "someone else playing media". Movies/music still match.
+        return configs.any { cfg ->
+            blockingUsage(cfg.audioAttributes.usage) &&
+                cfg.audioAttributes.contentType != AudioAttributes.CONTENT_TYPE_SONIFICATION
+        }
     }
 
     private fun setMuted(value: Boolean) {
@@ -94,14 +100,15 @@ class AudioFocusGate(
 
     companion object {
         fun mediaAttrs(): AudioAttributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
 
-        fun overlayAttrs(): AudioAttributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
+        /**
+         * Same stream as media so wired/BT headsets take exclusive output.
+         * USAGE_ALARM is avoided: many OEMs mix it to the speaker as well.
+         */
+        fun overlayAttrs(): AudioAttributes = mediaAttrs()
 
         private fun blockingUsage(usage: Int): Boolean {
             return usage == AudioAttributes.USAGE_MEDIA ||

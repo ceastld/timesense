@@ -2,7 +2,10 @@ package com.cea.timesense
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.cea.timesense.audio.BuiltinTones
 import com.cea.timesense.audio.Cue
+import com.cea.timesense.audio.SoundBank
+import com.cea.timesense.audio.SoundOption
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,18 +28,40 @@ object TimeSenseStore {
         val error: String? = null,
     )
 
+    data class CustomSound(
+        val id: String,
+        val cue: Cue,
+        val name: String,
+    )
+
     data class SoundSlot(
-        val customName: String?,
+        val selectedId: String,
     ) {
-        val isCustom: Boolean get() = !customName.isNullOrBlank()
+        val isCustom: Boolean get() = SoundBank.isCustomId(selectedId)
+
+        fun label(customs: List<CustomSound>): String {
+            if (isCustom) {
+                return customs.firstOrNull { it.id == selectedId }?.name ?: "自定义"
+            }
+            return BuiltinTones.byId(selectedId)?.label ?: "经典"
+        }
     }
 
     data class Settings(
         val ignoreAudioFocus: Boolean,
         val sounds: Map<Cue, SoundSlot>,
+        val customs: List<CustomSound>,
         val epoch: Int,
     ) {
-        fun slot(cue: Cue): SoundSlot = sounds[cue] ?: SoundSlot(null)
+        fun slot(cue: Cue): SoundSlot = sounds[cue] ?: SoundSlot(cue.defaultSoundId)
+
+        fun optionsFor(cue: Cue): List<SoundOption> {
+            val builtin = BuiltinTones.forCue(cue)
+            val extra = customs.filter { it.cue == cue }.map { custom ->
+                SoundOption(id = custom.id, cue = cue, label = custom.name, builtin = false)
+            }
+            return builtin + extra
+        }
     }
 
     private const val PREFS = "timesense"
@@ -46,6 +71,7 @@ object TimeSenseStore {
     private const val KEY_HOST = "host"
     private const val KEY_OK = "ok"
     private const val KEY_IGNORE_FOCUS = "ignore_audio_focus"
+    private const val KEY_CUSTOMS = "custom_sounds"
 
     @Volatile
     var offsetMs: Long = 0L
@@ -79,6 +105,7 @@ object TimeSenseStore {
             )
         }
         _settings.value = readSettings()
+        migrateLegacyCustoms(context)
     }
 
     fun nowMillis(): Long = System.currentTimeMillis() + offsetMs
@@ -98,15 +125,30 @@ object TimeSenseStore {
         bumpSettings()
     }
 
-    fun setCustomSound(cue: Cue, displayName: String) {
+    fun setSelectedSound(cue: Cue, soundId: String) {
         if (!this::prefs.isInitialized) return
-        prefs.edit().putString(cue.prefsKey, displayName).apply()
+        prefs.edit().putString(cue.prefsKey, soundId).apply()
         bumpSettings()
     }
 
-    fun clearCustomSound(cue: Cue) {
+    fun addCustomSound(imported: SoundBank.Imported) {
         if (!this::prefs.isInitialized) return
-        prefs.edit().remove(cue.prefsKey).apply()
+        val next = customsFromPrefs() + CustomSound(imported.id, imported.cue, imported.name)
+        writeCustoms(next)
+        prefs.edit().putString(imported.cue.prefsKey, imported.id).apply()
+        bumpSettings()
+    }
+
+    fun removeCustomSound(context: Context, id: String) {
+        if (!this::prefs.isInitialized) return
+        val remaining = customsFromPrefs().filterNot { it.id == id }
+        writeCustoms(remaining)
+        Cue.entries.forEach { cue ->
+            if (prefs.getString(cue.prefsKey, cue.defaultSoundId) == id) {
+                prefs.edit().putString(cue.prefsKey, cue.defaultSoundId).apply()
+            }
+        }
+        SoundBank.delete(context, id)
         bumpSettings()
     }
 
@@ -154,19 +196,63 @@ object TimeSenseStore {
 
     private fun readSettings(epoch: Int = _settings.value.epoch): Settings {
         if (!this::prefs.isInitialized) return defaultSettings(epoch)
+        val customs = customsFromPrefs()
         val sounds = Cue.entries.associateWith { cue ->
-            SoundSlot(prefs.getString(cue.prefsKey, null)?.takeIf { it.isNotBlank() })
+            val raw = prefs.getString(cue.prefsKey, null)
+            val selected = when {
+                raw.isNullOrBlank() -> cue.defaultSoundId
+                SoundBank.isCustomId(raw) && customs.none { it.id == raw } -> cue.defaultSoundId
+                !SoundBank.isCustomId(raw) && BuiltinTones.byId(raw) == null -> cue.defaultSoundId
+                else -> raw
+            }
+            SoundSlot(selected)
         }
         return Settings(
             ignoreAudioFocus = prefs.getBoolean(KEY_IGNORE_FOCUS, true),
             sounds = sounds,
+            customs = customs,
             epoch = epoch,
         )
     }
 
     private fun defaultSettings(epoch: Int = 0): Settings = Settings(
         ignoreAudioFocus = true,
-        sounds = Cue.entries.associateWith { SoundSlot(null) },
+        sounds = Cue.entries.associateWith { SoundSlot(it.defaultSoundId) },
+        customs = emptyList(),
         epoch = epoch,
     )
+
+    private fun customsFromPrefs(): List<CustomSound> {
+        if (!this::prefs.isInitialized) return emptyList()
+        return prefs.getStringSet(KEY_CUSTOMS, emptySet())
+            .orEmpty()
+            .mapNotNull { decodeCustom(it) }
+            .sortedBy { it.name }
+    }
+
+    private fun writeCustoms(list: List<CustomSound>) {
+        val encoded = list.map { encodeCustom(it) }.toSet()
+        prefs.edit().putStringSet(KEY_CUSTOMS, encoded).apply()
+    }
+
+    private fun encodeCustom(item: CustomSound): String {
+        return "${item.cue.name}\t${item.id}\t${item.name.replace('\t', ' ')}"
+    }
+
+    private fun decodeCustom(raw: String): CustomSound? {
+        val parts = raw.split('\t')
+        if (parts.size < 3) return null
+        val cue = Cue.entries.firstOrNull { it.name == parts[0] } ?: return null
+        return CustomSound(id = parts[1], cue = cue, name = parts.drop(2).joinToString("\t"))
+    }
+
+    private fun migrateLegacyCustoms(context: Context) {
+        Cue.entries.forEach { cue ->
+            val legacyName = prefs.getString("sound_${cue.name.lowercase()}", null)
+            val imported = SoundBank.migrateV1(context, cue) ?: return@forEach
+            val named = imported.copy(name = legacyName?.takeIf { it.isNotBlank() } ?: imported.name)
+            addCustomSound(named)
+            prefs.edit().remove("sound_${cue.name.lowercase()}").apply()
+        }
+    }
 }
