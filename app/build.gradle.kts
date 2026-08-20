@@ -6,7 +6,9 @@ plugins {
 
 val ciVersionName = (findProperty("versionName") as String?)?.takeIf { it.isNotBlank() }
 val ciVersionCode = (findProperty("versionCode") as String?)?.toIntOrNull()
-val keystorePath = System.getenv("TIMESENSE_KEYSTORE").orEmpty()
+fun nonBlankEnv(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
+
+val keystorePath = nonBlankEnv("TIMESENSE_KEYSTORE").orEmpty()
 val releaseKeystore = keystorePath.takeIf { it.isNotBlank() }?.let { file(it) }?.takeIf { it.isFile }
 
 android {
@@ -25,10 +27,10 @@ android {
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = releaseKeystore
-                storePassword = System.getenv("TIMESENSE_STORE_PASSWORD") ?: ""
-                keyAlias = System.getenv("TIMESENSE_KEY_ALIAS") ?: "upload"
-                keyPassword = System.getenv("TIMESENSE_KEY_PASSWORD")
-                    ?: System.getenv("TIMESENSE_STORE_PASSWORD")
+                storePassword = nonBlankEnv("TIMESENSE_STORE_PASSWORD") ?: ""
+                keyAlias = nonBlankEnv("TIMESENSE_KEY_ALIAS") ?: "upload"
+                keyPassword = nonBlankEnv("TIMESENSE_KEY_PASSWORD")
+                    ?: nonBlankEnv("TIMESENSE_STORE_PASSWORD")
                     ?: ""
             }
         }
