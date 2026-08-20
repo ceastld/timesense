@@ -4,6 +4,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val ciVersionName = (findProperty("versionName") as String?)?.takeIf { it.isNotBlank() }
+val ciVersionCode = (findProperty("versionCode") as String?)?.toIntOrNull()
+val keystorePath = System.getenv("TIMESENSE_KEYSTORE").orEmpty()
+val releaseKeystore = keystorePath.takeIf { it.isNotBlank() }?.let { file(it) }?.takeIf { it.isFile }
+
 android {
     namespace = "com.cea.timesense"
     compileSdk = 35
@@ -12,14 +17,31 @@ android {
         applicationId = "com.cea.timesense"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.0.5"
+        versionCode = ciVersionCode ?: 6
+        versionName = ciVersionName ?: "1.0.5"
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = System.getenv("TIMESENSE_STORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("TIMESENSE_KEY_ALIAS") ?: "upload"
+                keyPassword = System.getenv("TIMESENSE_KEY_PASSWORD")
+                    ?: System.getenv("TIMESENSE_STORE_PASSWORD")
+                    ?: ""
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (releaseKeystore != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

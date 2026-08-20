@@ -12,3 +12,6 @@
 *.ap_
 *.aab
 *.dex
+*.jks
+*.keystore
+keystore.properties
