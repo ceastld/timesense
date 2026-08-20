@@ -17,6 +17,7 @@ import androidx.core.app.ServiceCompat
 import com.cea.timesense.MainActivity
 import com.cea.timesense.R
 import com.cea.timesense.TimeSenseStore
+import com.cea.timesense.audio.Cue
 import com.cea.timesense.audio.SoundEngine
 import com.cea.timesense.time.ClockScheduler
 import com.cea.timesense.time.TimeSync
@@ -106,9 +107,15 @@ class TickService : Service() {
     }
 
     private fun onAlignedSecond(wallClockMs: Long) {
-        val cue = ClockScheduler.cueAt(wallClockMs)
         if (!TimeSenseStore.ticksHeldNow) {
-            soundEngine?.play(cue)
+            val accent = ClockScheduler.cueAt(wallClockMs)
+            val engine = soundEngine
+            if (accent == Cue.TICK) {
+                engine?.play(Cue.TICK)
+            } else {
+                engine?.play(Cue.TICK, volume = 0.5f)
+                engine?.play(accent)
+            }
         }
         notifyHandler.post { updateNotification(wallClockMs) }
     }

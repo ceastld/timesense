@@ -13,7 +13,8 @@ import java.util.concurrent.atomic.AtomicReference
  * honor the ignore-audio-focus setting. Preview playback never takes focus.
  *
  * Each cue keeps at most one live stream so a long custom tick cannot
- * stack on itself and steal slots from the next second.
+ * stack on itself and steal slots from the next second. Minute/hour
+ * accents overlay a quieter tick instead of replacing it.
  */
 class SoundEngine(
     context: Context,
@@ -65,12 +66,9 @@ class SoundEngine(
         }
     }
 
-    fun play(cue: Cue, force: Boolean = false) {
+    fun play(cue: Cue, force: Boolean = false, volume: Float = 1f) {
         val id = TimeSenseStore.settings.value.slot(cue).selectedId
-        if (cue != Cue.TICK) {
-            stopCue(Cue.TICK)
-        }
-        playId(id, force)
+        playId(id, force, volume)
     }
 
     fun playExclusive(soundId: String, force: Boolean = true) {
@@ -80,9 +78,10 @@ class SoundEngine(
         playId(soundId, force)
     }
 
-    fun playId(soundId: String, force: Boolean = false) {
+    fun playId(soundId: String, force: Boolean = false, volume: Float = 1f) {
         if (released) return
         if (!force && holdFocus && focusGate?.shouldPlay() == false) return
+        val gain = volume.coerceIn(0f, 1f)
         synchronized(lock) {
             if (released) return
             val playable = if (isReady(soundId)) soundId else fallbackIfReady(soundId)
@@ -90,7 +89,7 @@ class SoundEngine(
                 pendingId.set(soundId)
                 return
             }
-            playNowLocked(playable)
+            playNowLocked(playable, gain)
         }
     }
 
@@ -177,13 +176,6 @@ class SoundEngine(
         }
     }
 
-    private fun stopCue(cue: Cue) {
-        synchronized(lock) {
-            if (released) return
-            stopCueLocked(cue)
-        }
-    }
-
     private fun stopCueLocked(cue: Cue) {
         val streamId = lastStreamByCue[cue.ordinal]
         if (streamId == 0) return
@@ -194,7 +186,7 @@ class SoundEngine(
         }
     }
 
-    private fun playNowLocked(soundId: String) {
+    private fun playNowLocked(soundId: String, volume: Float) {
         if (released) return
         val poolId = ids[soundId] ?: ids[fallbackId(soundId)] ?: return
         val cue = cueFor(soundId)
@@ -202,8 +194,8 @@ class SoundEngine(
         try {
             val streamId = pool.play(
                 poolId,
-                1f,
-                1f,
+                volume,
+                volume,
                 /* priority */ priorityOf(cue),
                 /* loop */ 0,
                 /* rate */ 1f,
